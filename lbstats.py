@@ -2,7 +2,7 @@
 from __future__ import division
 import argparse, mechanize, cookielib, re, csv, pdb
 from bs4 import BeautifulSoup as bs
-Version = '0.2'
+Version = '0.3'
 
 #############################################################
 # A simple MWO stats scraper that dumps a specified users
@@ -15,28 +15,26 @@ Version = '0.2'
 #   - https://pypi.python.org/pypi/beautifulsoup4
 #      pip install bs4
 #
-# Disclaimer
-#   I am not a software dev and this code likely reflects that.
-#   Feel free to use or improve as you like. Currently it fetches
-#   stats serially and speed could be improved with concurrency.
-#
 # History
 #   2016-09-21 / eta0h / V0.1 / Initial script
 #   2016-12-26 / eta0h / V0.2 / Now defaults to current season,
-#                               Added Death Loss Ratio
+#                               Added Jman5's Death Loss Ratio
+#   2017-01-01 / eta0h / V0.3 / Now takes a list of pilots from the cmd line
+#                               Now defaults to fetching all weight classes
 #############################################################
 # MWO username & password
-Email = 'name@somewhere.com'
-Password = 'mypassword'
+Email = 'mwostats@gmail.com'
+Password = 'fakepassword'
 
-# List of pilot names you might want to track frequently
-Pilotlist = ['Some Pilot', 'pilot2', 'Pilot 3']
+# Lists of pilot names you might want to track frequently
+# call the script as -p "list"
+lPilots = ['add', 'pilot-name', 'tothis', 'list']
 
 ########################################################
 # Returns a dict comprised of the stats for a given
 # pilot, season and all weight classes
 ########################################################
-def FetchStats(Pilot, Season, Weight):
+def FetchStats(Pilot, Season):
     
     dStats = {}
     
@@ -55,15 +53,10 @@ def FetchStats(Pilot, Season, Weight):
         discard=True, comment=None, comment_url=None, rest={'HttpOnly': None}, rfc2109=False)
     cj.set_cookie(season_ck)
     
-    if Weight == 'all':
-        Weightlist = ['global', 'light', 'medium', 'heavy', 'assault']
-    else:
-        Weightlist = [Weight]
-        
     # Build up URL to reflect weight class and pilot
-    for WC in Weightlist:
+    for WC in ['global', 'light', 'medium', 'heavy', 'assault']:
         if WC == 'global': wctype = 0
-        if WC == 'light': wctype = 1
+        if WC == 'light': wctype = 1     
         if WC == 'medium': wctype = 2
         if WC == 'heavy': wctype = 3
         if WC == 'assault': wctype = 4
@@ -74,8 +67,8 @@ def FetchStats(Pilot, Season, Weight):
         soup = bs(page, 'html.parser')
         table = soup.find('table')
         
-        # If season not specified, re-map to current season
-        if Season == 100:
+        # If season not specified, use current season
+        if Season == 1000:
             Seasons = list(soup.find('select', id="season").stripped_strings)
             Season = int(Seasons[-1].split(" ")[1])
         
@@ -89,29 +82,17 @@ def FetchStats(Pilot, Season, Weight):
             try:
                 PilotName = col[1].string.encode('utf-8')
                 if PilotName == Pilot:
-                    Rank = int(col[0].string.encode('utf-8'))
-                    Wins = int(col[2].string.encode('utf-8'))
-                    Losses = int(col[3].string.encode('utf-8'))
-                    WLRatio = float(col[4].string.encode('utf-8'))
-                    Kills = int(col[5].string.encode('utf-8'))
-                    Deaths = int(col[6].string.encode('utf-8'))
-                    KDR = float(col[7].string.encode('utf-8'))
-                    Played = int(col[8].string.encode('utf-8'))
-                    AvgScore = int(col[9].string.encode('utf-8'))
-                    if Losses == 0: DLRatio = 0
-                    else: DLRatio = round(float(Deaths/Losses), 2)
                     dStats.update({WC: {
                         'Season': Season,
-                        'Rank': Rank,
-                        'Wins': Wins,
-                        'Losses': Losses,
-                        'WLRatio': WLRatio,
-                        'Kills': Kills,
-                        'Deaths': Deaths,
-                        'KDR': KDR,
-                        'GamesPlayed': Played,
-                        'AvgScore': AvgScore,
-                        'DLRatio': DLRatio
+                        'Rank': int(col[0].string.encode('utf-8')),
+                        'Wins': int(col[2].string.encode('utf-8')),
+                        'Losses': int(col[3].string.encode('utf-8')),
+                        'WLRatio': float(col[4].string.encode('utf-8')),
+                        'Kills': int(col[5].string.encode('utf-8')),
+                        'Deaths': int(col[6].string.encode('utf-8')),
+                        'KDR': float(col[7].string.encode('utf-8')),
+                        'GamesPlayed': int(col[8].string.encode('utf-8')),
+                        'AvgScore': int(col[9].string.encode('utf-8'))
                     }})
                     break
                     
@@ -130,33 +111,28 @@ def main():
     # Arg parser
     parser = argparse.ArgumentParser(
         prog='lbstats.py',
-        description='''A simple MWO stats scraper that dumps a specified users
+        description='''A MWO leaderboard stats scraper that dumps a specified users
                        leaderboard stats to stdout and optionally a csv file.''',
         epilog='-----------------------------------------------------------------------',
         usage='''%(prog)s [options]"
         Examples:
+          %(prog)s -p "JoePilot, Pilolt2, Pilot 3"
           %(prog)s -p JoePilot -s 3
-          %(prog)s -p "Joe Pilot" -w a
           %(prog)s -p list -s 2 -f stats.csv''')
     
     # Arg Help
     parser.add_argument('-p', dest='Pilot', metavar='<PilotName>', required=True,
-        help='''Required: Can be an individual pilot name or the list of pilots defined at
-                the top of the script. The list is useful to track the same list of pilots, like
-                all the pilots of a given unit.
-                Use quotes for spaces and capitalization counts''')
-    
-    parser.add_argument('-w', dest='Weight', metavar='<all|l|m|h|a>', default='all' ,
-        choices=['all', 'g', 'l', 'm', 'h', 'a'],
-        help='''Optional: The Mech weight class, where g=global, l=light, m=medium, h=heavy, a=assault.
-                Default is to get all''')
+        help='''Required: Can be an individual pilot name, a comma delimited list of names
+                or a list of pilots defined at the top of the script.
+                The list is useful to track the same list of pilots, like all the pilots of a given unit.
+                Use quotes for names with spaces and capitalization counts''')
     
     parser.add_argument('-f', dest='StatsFile', metavar='<FileName>', default=None,
         help='''Optional: The name of the csv file to dump the stats to.
                 Default is to print to standard out only.''')
     
-    parser.add_argument('-s', dest='Season', metavar='<Season>', default=100 , type=int,
-        help='Optional: The leaderboard season. Default is latest')
+    parser.add_argument('-s', dest='Season', metavar='<Season>', default=1000 , type=int,
+        help='Optional: The leaderboard season. Default is the current season')
     
     parser.add_argument('-v', '--version', action='version', version='%(prog)s ' + Version)
     
@@ -165,14 +141,6 @@ def main():
     Pilot = args.Pilot
     Season = args.Season
     StatsFile = args.StatsFile
-    Weight = args.Weight
-    
-    # Re-map weight class
-    if Weight == 'g': Weight = 'global'
-    if Weight == 'l': Weight = 'light'
-    if Weight == 'm': Weight = 'medium'
-    if Weight == 'h': Weight = 'heavy'
-    if Weight == 'a': Weight = 'assault'
     
     # Open stats csv
     if StatsFile != None:
@@ -198,20 +166,21 @@ def main():
         exit()
         
     # Log header stdio
-    Templ = '{:^20} {:^7} {:^8} {:^6} {:^6} {:^6} {:^6}  {:^6}  {:^6}  {:^6}  {:^8}  {:^8}  {:^8}'
+    Templ = '{:^20} {:^7} {:^8} {:^6} {:^6} {:^6} {:^6}  {:^6}  {:^6}  {:^6} {:^8} {:^8} {:^8} {:^8}'
     print Templ.format('Pilot', 'Season', 'Weight', 'Rank', 'Wins', 'Losses', 'WLRatio',
-                       'Kills', 'Deaths', 'KDRatio', 'Played', 'AvgScore', 'DLRatio')
+                       'Kills', 'Deaths', 'KDRatio', 'Played', 'AvgScore', 'DLRatio', 'Kills/Game')
     # Log header csv
     if StatsFile != None:
         csvWriter.writerow(['Pilot', 'Season', 'Weight', 'Rank', 'Wins', 'Losses', 'WLRatio',
-                            'Kills', 'Deaths', 'KDRatio', 'Played', 'AvgScore', 'DLRatio'])
+                            'Kills', 'Deaths', 'KDRatio', 'Played', 'AvgScore', 'DLRatio', 'KillsPerGame'])
         
     # Single pilot or list of pilots?
-    if Pilot != 'list': Pilotlist = [Pilot]
+    Pilotlist = re.split(', |,',Pilot)
+    if Pilot == 'list': Pilotlist = lPilots
     
     # Parse and dump stats
     for Pilot in Pilotlist:
-        Stats = FetchStats(Pilot, Season, Weight)
+        Stats = FetchStats(Pilot, Season)
         if Stats == False: continue
         
         if len(Stats) < 1:
@@ -220,18 +189,36 @@ def main():
              
         for WC in ['global', 'light', 'medium', 'heavy', 'assault']:
             if WC in Stats.keys():
-                print Templ.format(Pilot, Stats[WC]['Season'], WC, Stats[WC]['Rank'], Stats[WC]['Wins'],
-                   Stats[WC]['Losses'], Stats[WC]['WLRatio'], Stats[WC]['Kills'], Stats[WC]['Deaths'],
-                   Stats[WC]['KDR'], Stats[WC]['GamesPlayed'], Stats[WC]['AvgScore'], Stats[WC]['DLRatio'])
+                Season = Stats[WC]['Season']
+                Rank = Stats[WC]['Rank']
+                Wins = Stats[WC]['Wins']
+                Losses = Stats[WC]['Losses']
+                WLRatio = Stats[WC]['WLRatio']
+                Kills = Stats[WC]['Kills']
+                Deaths = Stats[WC]['Deaths']
+                KDR = Stats[WC]['KDR']
+                GamesPlayed = Stats[WC]['GamesPlayed']
+                AvgScore = Stats[WC]['AvgScore']
+                
+                # DLR & KPG
+                if Losses == 0:DLRatio = 0
+                else: DLRatio = round(float(Deaths/Losses), 2)
+                if Kills == 0: KillsPerGame = 0
+                else: KillsPerGame = round(Kills/GamesPlayed, 2)
+                
+                print Templ.format(Pilot, Season, WC, Rank, Wins,
+                   Losses, WLRatio, Kills, Deaths, KDR, GamesPlayed,
+                   AvgScore, DLRatio, KillsPerGame)
                 if StatsFile != None:
-                    csvWriter.writerow([Pilot, Season, WC, Stats[WC]['Rank'], Stats[WC]['Wins'],
-                    Stats[WC]['Losses'], Stats[WC]['WLRatio'], Stats[WC]['Kills'], Stats[WC]['Deaths'],
-                    Stats[WC]['KDR'], Stats[WC]['GamesPlayed'], Stats[WC]['AvgScore'], Stats[WC]['DLRatio']])
+                    csvWriter.writerow([Pilot, Season, WC, Rank, Wins,
+                    Losses, WLRatio, Kills, Deaths, KDR, GamesPlayed,
+                    AvgScore, DLRatio, KillsPerGame])
+                    
         print ''
-    if StatsFile != None:
-        print 'Success - stats saved to %s' % (StatsFile)
         
-    exit()
+    if StatsFile != None: print 'Success - stats saved to %s' % (StatsFile)
+    
+    return True
     
 if __name__ == "__main__":
     main()
